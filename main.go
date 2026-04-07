@@ -287,10 +287,19 @@ func main() {
 	}
 	insecureSkipVerify := os.Getenv("MQTT_TLS_INSECURE") == "true"
 
+	probeAddrDefault := ":8080"
+	if v := os.Getenv("PROBE_ADDR"); v != "" {
+		probeAddrDefault = v
+	}
+	otlpEndpointDefault := "tempo.observability:4317"
+	if v := os.Getenv("OTLP_ENDPOINT"); v != "" {
+		otlpEndpointDefault = v
+	}
+
 	qos := flag.Int("qos", 0, "QoS level to subscribe at")
 	queueDepth := flag.Int("queue-depth", 20, "MQTT message queue depth before dropping")
-	probeAddr := flag.String("probe-addr", ":8080", "Address for Kubernetes probe/metrics HTTP server")
-	otlpEndpoint := flag.String("otlp-endpoint", "tempo.observability:4317", "OTLP gRPC endpoint for traces")
+	probeAddr := flag.String("probe-addr", probeAddrDefault, "Address for Kubernetes probe/metrics HTTP server")
+	otlpEndpoint := flag.String("otlp-endpoint", otlpEndpointDefault, "OTLP gRPC endpoint for traces")
 	flag.Parse()
 
 	vmPushURLRedacted := vmPushURL
