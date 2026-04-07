@@ -93,7 +93,8 @@ func main() {
 	topic := "tele/" + sensor + "/SENSOR"
 	opts.OnConnect = func(c mqtt.Client) {
 		if token := c.Subscribe(topic, byte(*qos), onMessageReceived); token.Wait() && token.Error() != nil {
-			log.Fatalf("ERROR: failed to subscribe to topic %s: %s", topic, token.Error())
+			log.Printf("ERROR: failed to subscribe to topic %s: %s", topic, token.Error())
+			return
 		}
 		fmt.Printf("Subscribed to topic: %s\n", topic)
 	}
