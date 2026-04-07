@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: tank-monitor
+  namespace: taylor-monitoring
+  labels:
+    app: tank-monitor
+spec:
+  selector:
+    app: tank-monitor
+  ports:
+  - name: metrics
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: tank-monitor
+  namespace: taylor-monitoring
+  labels:
+    app: tank-monitor
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app: tank-monitor
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
