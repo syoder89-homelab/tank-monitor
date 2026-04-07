@@ -11,7 +11,7 @@ import (
 	"flag"
 	"github.com/VictoriaMetrics/metrics"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
-	"github.com/syoder89/tank-monitor/vmclient"
+	"github.com/syoder89-homelab/tank-monitor/vmclient"
 )
 
 type TankMsg struct {
