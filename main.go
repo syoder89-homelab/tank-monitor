@@ -2,36 +2,41 @@ package main
 
 import (
 	"crypto/tls"
+	"encoding/json"
+	"flag"
 	"fmt"
-	"time"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
-	"encoding/json"
-	"flag"
+	"time"
+
 	"github.com/VictoriaMetrics/metrics"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/syoder89-homelab/tank-monitor/vmclient"
 )
 
 type TankMsg struct {
-	Distance float64
-	Temperature float64
-	Humidity float64
+	Distance    float64 `json:"Distance"`
+	Temperature float64 `json:"Temperature"`
+	Humidity    float64 `json:"Humidity"`
 }
 
 var tmsg TankMsg
 var sensor string
-// tcp://mosquitto
 var broker = "tcp://mosquitto:1883"
-// http://172.20.1.4:8428/api/v1/import/prometheus
 var vmPushURL = "http://victoria-metrics-victoria-metrics-single-server:8428/api/v1/import/prometheus"
 
 func onMessageReceived(client mqtt.Client, msg mqtt.Message) {
 	fmt.Printf("Received message: %s from topic: %s\n", msg.Payload(), msg.Topic())
-	json.Unmarshal([]byte(msg.Payload()), &tmsg)
+	if err := json.Unmarshal(msg.Payload(), &tmsg); err != nil {
+		log.Printf("ERROR: failed to parse message payload: %s", err)
+		return
+	}
 	fmt.Println(tmsg)
-	vmclient.Push(vmPushURL, 20*time.Second, `sensor="`+sensor+`"`, false)
+	if err := vmclient.Push(vmPushURL, 20*time.Second, `sensor="`+sensor+`"`, false); err != nil {
+		log.Printf("ERROR: failed to push metrics: %s", err)
+	}
 }
 
 func main() {
@@ -41,7 +46,7 @@ func main() {
 	if val, ok := os.LookupEnv("SENSOR"); ok {
 		sensor = val
 	} else {
-		panic("No sensor name provided!")
+		log.Fatal("SENSOR environment variable is required")
 	}
 
 	if val, ok := os.LookupEnv("BROKER"); ok {
@@ -50,37 +55,54 @@ func main() {
 	if val, ok := os.LookupEnv("VM_PUSH_URL"); ok {
 		vmPushURL = val
 	}
+
+	mqttUser := "emqx"
+	if val, ok := os.LookupEnv("MQTT_USER"); ok {
+		mqttUser = val
+	}
+	mqttPassword := "public"
+	if val, ok := os.LookupEnv("MQTT_PASSWORD"); ok {
+		mqttPassword = val
+	}
+	insecureSkipVerify := os.Getenv("MQTT_TLS_INSECURE") == "true"
+
 	qos := flag.Int("qos", 0, "The QoS to subscribe to messages at")
+	flag.Parse()
+
+	log.Printf("Config: broker=%s vmPushURL=%s sensor=%s insecureSkipVerify=%v", broker, vmPushURL, sensor, insecureSkipVerify)
 
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker(broker)
-	opts.SetClientID("monitor-"+sensor)
-	opts.SetUsername("emqx")
-	opts.SetPassword("public")
+	opts.SetClientID("monitor-" + sensor)
+	opts.SetUsername(mqttUser)
+	opts.SetPassword(mqttPassword)
 	opts.SetCleanSession(true)
 	opts.SetOrderMatters(false)
 	opts.SetKeepAlive(30 * time.Second)
-	tlsConfig := &tls.Config{InsecureSkipVerify: true, ClientAuth: tls.NoClientCert}
+	opts.SetAutoReconnect(true)
+	opts.SetConnectionLostHandler(func(c mqtt.Client, err error) {
+		log.Printf("WARN: MQTT connection lost: %s", err)
+	})
+	tlsConfig := &tls.Config{InsecureSkipVerify: insecureSkipVerify, ClientAuth: tls.NoClientCert}
 	opts.SetTLSConfig(tlsConfig)
 
 	metrics.NewGauge(`distance`, func() float64 { return tmsg.Distance })
 	metrics.NewGauge(`temperature`, func() float64 { return tmsg.Temperature })
 	metrics.NewGauge(`humidity`, func() float64 { return tmsg.Humidity })
 
-	topic := "tele/"+sensor+"/SENSOR"
+	topic := "tele/" + sensor + "/SENSOR"
 	opts.OnConnect = func(c mqtt.Client) {
 		if token := c.Subscribe(topic, byte(*qos), onMessageReceived); token.Wait() && token.Error() != nil {
-			panic(token.Error())
+			log.Fatalf("ERROR: failed to subscribe to topic %s: %s", topic, token.Error())
 		}
 		fmt.Printf("Subscribed to topic: %s\n", topic)
 	}
 
 	client := mqtt.NewClient(opts)
 	if token := client.Connect(); token.Wait() && token.Error() != nil {
-		panic(token.Error())
-	} else {
-		fmt.Printf("Connected to %s\n", broker)
+		log.Fatalf("ERROR: failed to connect to broker %s: %s", broker, token.Error())
 	}
+	fmt.Printf("Connected to %s\n", broker)
 
 	<-c
 }

@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"strings"
 	"log"
-	"io/ioutil"
 	"github.com/VictoriaMetrics/metrics"
 )
 
@@ -166,7 +165,7 @@ func PushExt(pushURL string, timeout time.Duration, extraLabels string, writeMet
 		if err := zw.Close(); err != nil {
 			panic(fmt.Errorf("BUG: cannot flush metrics to gzip writer: %s", err))
 		}
-		req, err := http.NewRequest("GET", pushURL, &bb)
+		req, err := http.NewRequest("POST", pushURL, &bb)
 		if err != nil {
 			panic(fmt.Errorf("BUG: metrics.push: cannot initialize request for metrics push to %q: %w", pushURLRedacted, err))
 		}
@@ -178,7 +177,7 @@ func PushExt(pushURL string, timeout time.Duration, extraLabels string, writeMet
 			return
 		}
 		if resp.StatusCode/100 != 2 {
-			body, _ := ioutil.ReadAll(resp.Body)
+			body, _ := io.ReadAll(resp.Body)
 			_ = resp.Body.Close()
 			log.Printf("ERROR: metrics.push: unexpected status code in response from %q: %d; expecting 2xx; response body: %q",
 				pushURLRedacted, resp.StatusCode, body)
