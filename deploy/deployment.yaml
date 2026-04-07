@@ -18,5 +18,40 @@ spec:
       - env:
         - name: SENSOR
           value: taylor_water_tank_level1
+        - name: BROKER
+          value: tcp://mosquitto:1883
+        - name: VM_PUSH_URL
+          value: http://victoria-metrics-victoria-metrics-single-server:8428/api/v1/import/prometheus
+        - name: MQTT_USER
+          valueFrom:
+            secretKeyRef:
+              name: tank-monitor-mqtt
+              key: username
+        - name: MQTT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: tank-monitor-mqtt
+              key: password
         image: syoder89/tank-monitor
         name: tank-monitor
+        ports:
+        - containerPort: 8080
+          name: probes
+        startupProbe:
+          httpGet:
+            path: /startupz
+            port: 8080
+          failureThreshold: 30
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          periodSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8080
+          periodSeconds: 10
+          failureThreshold: 3
