@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -23,17 +24,22 @@ type TankMsg struct {
 }
 
 var tmsg TankMsg
+var tmsgMu sync.RWMutex
 var sensor string
 var broker = "tcp://mosquitto:1883"
 var vmPushURL = "http://victoria-metrics-victoria-metrics-single-server:8428/api/v1/import/prometheus"
 
 func onMessageReceived(client mqtt.Client, msg mqtt.Message) {
 	fmt.Printf("Received message: %s from topic: %s\n", msg.Payload(), msg.Topic())
-	if err := json.Unmarshal(msg.Payload(), &tmsg); err != nil {
+	var parsed TankMsg
+	if err := json.Unmarshal(msg.Payload(), &parsed); err != nil {
 		log.Printf("ERROR: failed to parse message payload: %s", err)
 		return
 	}
+	tmsgMu.Lock()
+	tmsg = parsed
 	fmt.Println(tmsg)
+	tmsgMu.Unlock()
 	if err := vmclient.Push(vmPushURL, 20*time.Second, `sensor="`+sensor+`"`, false); err != nil {
 		log.Printf("ERROR: failed to push metrics: %s", err)
 	}
@@ -86,9 +92,21 @@ func main() {
 	tlsConfig := &tls.Config{InsecureSkipVerify: insecureSkipVerify, ClientAuth: tls.NoClientCert}
 	opts.SetTLSConfig(tlsConfig)
 
-	metrics.NewGauge(`distance`, func() float64 { return tmsg.Distance })
-	metrics.NewGauge(`temperature`, func() float64 { return tmsg.Temperature })
-	metrics.NewGauge(`humidity`, func() float64 { return tmsg.Humidity })
+	metrics.NewGauge(`distance`, func() float64 {
+		tmsgMu.RLock()
+		defer tmsgMu.RUnlock()
+		return tmsg.Distance
+	})
+	metrics.NewGauge(`temperature`, func() float64 {
+		tmsgMu.RLock()
+		defer tmsgMu.RUnlock()
+		return tmsg.Temperature
+	})
+	metrics.NewGauge(`humidity`, func() float64 {
+		tmsgMu.RLock()
+		defer tmsgMu.RUnlock()
+		return tmsg.Humidity
+	})
 
 	topic := "tele/" + sensor + "/SENSOR"
 	opts.OnConnect = func(c mqtt.Client) {
