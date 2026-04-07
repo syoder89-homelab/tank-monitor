@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -36,12 +37,15 @@ type config struct {
 	insecureSkipVerify bool
 	queueDepth         int
 	qos                int
+	probeAddr          string
 }
 
 type monitor struct {
-	cfg    config
-	queue  chan TankMsg
-	client *http.Client
+	cfg     config
+	queue   chan TankMsg
+	client  *http.Client
+	started atomic.Bool // true once MQTT connected at least once
+	ready   atomic.Bool // true while MQTT is connected
 }
 
 func newMonitor(cfg config) *monitor {
@@ -63,6 +67,39 @@ func (m *monitor) onMessage(_ mqtt.Client, msg mqtt.Message) {
 	case m.queue <- parsed:
 	default:
 		log.Printf("WARN: queue full, dropping message for sensor %s", m.cfg.sensor)
+	}
+}
+
+func (m *monitor) serveProbes(ctx context.Context) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		if !m.ready.Load() {
+			http.Error(w, "MQTT not connected", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("/startupz", func(w http.ResponseWriter, _ *http.Request) {
+		if !m.started.Load() {
+			http.Error(w, "not yet connected", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := &http.Server{
+		Addr:    m.cfg.probeAddr,
+		Handler: mux,
+	}
+	go func() {
+		<-ctx.Done()
+		srv.Shutdown(context.Background()) //nolint:errcheck
+	}()
+	log.Printf("Probe server listening on %s", m.cfg.probeAddr)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Printf("ERROR: probe server: %s", err)
 	}
 }
 
@@ -144,6 +181,7 @@ func main() {
 
 	qos := flag.Int("qos", 0, "QoS level to subscribe at")
 	queueDepth := flag.Int("queue-depth", 20, "MQTT message queue depth before dropping")
+	probeAddr := flag.String("probe-addr", ":8080", "Address for Kubernetes probe HTTP server")
 	flag.Parse()
 
 	vmPushURLRedacted := vmPushURL
@@ -161,6 +199,7 @@ func main() {
 		insecureSkipVerify: insecureSkipVerify,
 		queueDepth:         *queueDepth,
 		qos:                *qos,
+		probeAddr:          *probeAddr,
 	}
 
 	log.Printf("Config: broker=%s vmPushURL=%s sensor=%s insecureSkipVerify=%v queueDepth=%d",
@@ -179,6 +218,7 @@ func main() {
 	opts.SetAutoReconnect(true)
 	opts.SetConnectionLostHandler(func(c mqtt.Client, err error) {
 		log.Printf("WARN: MQTT connection lost: %s", err)
+		mon.ready.Store(false)
 	})
 	tlsConfig := &tls.Config{InsecureSkipVerify: cfg.insecureSkipVerify, ClientAuth: tls.NoClientCert}
 	opts.SetTLSConfig(tlsConfig)
@@ -189,6 +229,8 @@ func main() {
 			log.Printf("ERROR: failed to subscribe to %s: %s", topic, token.Error())
 			return
 		}
+		mon.started.Store(true)
+		mon.ready.Store(true)
 		log.Printf("Subscribed to topic: %s", topic)
 	}
 
@@ -199,6 +241,7 @@ func main() {
 	log.Printf("Connected to %s", cfg.broker)
 
 	go mon.run(ctx)
+	go mon.serveProbes(ctx)
 
 	<-ctx.Done()
 	log.Println("Shutting down")

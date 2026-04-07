@@ -34,3 +34,24 @@ spec:
               key: password
         image: syoder89/tank-monitor
         name: tank-monitor
+        ports:
+        - containerPort: 8080
+          name: probes
+        startupProbe:
+          httpGet:
+            path: /startupz
+            port: 8080
+          failureThreshold: 30
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          periodSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8080
+          periodSeconds: 10
+          failureThreshold: 3
