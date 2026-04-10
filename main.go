@@ -222,7 +222,7 @@ func (m *monitor) push(ctx context.Context, msg TankMsg) error {
 	return nil
 }
 
-func (m *monitor) serveProbes(ctx context.Context) {
+func (m *monitor) buildMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -242,9 +242,13 @@ func (m *monitor) serveProbes(ctx context.Context) {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
+	return mux
+}
+
+func (m *monitor) serveProbes(ctx context.Context) {
 	srv := &http.Server{
 		Addr:    m.cfg.probeAddr,
-		Handler: mux,
+		Handler: m.buildMux(),
 	}
 	go func() {
 		<-ctx.Done()
